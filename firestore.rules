@@ -1,0 +1,140 @@
+rules_version = '2';
+// Spark-safe: everything is enforced here, no Cloud Functions.
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() { return request.auth != null; }
+    function me() { return get(/databases/$(database)/documents/users/$(request.auth.uid)).data; }
+    function isAdmin() { return signedIn() && exists(/databases/$(database)/documents/users/$(request.auth.uid)) && me().role == 'admin'; }
+    function active() { return signedIn() && exists(/databases/$(database)/documents/users/$(request.auth.uid)) && me().get('suspended', false) != true; }
+    function str(v, min, max) { return v is string && v.size() >= min && v.size() <= max; }
+    function changed() { return request.resource.data.diff(resource.data).affectedKeys(); }
+    function inNYC(d) { return d.lat is number && d.lng is number && d.lat > 40.49 && d.lat < 40.92 && d.lng > -74.27 && d.lng < -73.68; }
+
+    // Username → uid/email lookup. Readable one at a time (for username login), never listable.
+    match /usernames/{name} {
+      allow get: if true;
+      allow list: if false;
+      allow create: if signedIn() && request.resource.data.uid == request.auth.uid
+        && name.matches('^[a-z0-9_]{3,20}$');
+      allow delete: if signedIn() && (resource.data.uid == request.auth.uid || isAdmin());
+    }
+
+    // Private profile.
+    match /users/{uid} {
+      allow read: if signedIn() && (request.auth.uid == uid || isAdmin());
+      allow create: if signedIn() && request.auth.uid == uid
+        && request.resource.data.role == 'user'
+        && !('verifiedOrg' in request.resource.data) && !('suspended' in request.resource.data)
+        && request.resource.data.birthYear is int
+        && request.time.year() - request.resource.data.birthYear >= 13
+        && str(request.resource.data.username, 3, 20);
+      allow update: if (signedIn() && request.auth.uid == uid
+          && !changed().hasAny(['role', 'verifiedOrg', 'suspended', 'username', 'birthYear', 'email', 'uid']))
+        || isAdmin();
+      allow delete: if signedIn() && request.auth.uid == uid;
+
+      match /{sub}/{id} {
+        allow read, write: if signedIn() && request.auth.uid == uid && sub in ['favorites', 'logs'];
+      }
+    }
+
+    // Public profile: no email, no birth year.
+    match /profiles/{uid} {
+      allow read: if true;
+      allow create: if signedIn() && request.auth.uid == uid
+        && request.resource.data.keys().hasOnly(['username', 'minor', 'createdAt']);
+      allow update: if isAdmin() || (signedIn() && request.auth.uid == uid && !changed().hasAny(['verifiedOrg', 'minor']));
+      allow delete: if signedIn() && (request.auth.uid == uid || isAdmin());
+    }
+
+    match /events/{id} {
+      function valid(d) {
+        return str(d.title, 3, 80) && str(d.description, 10, 1000) && str(d.whoShouldJoin, 0, 120)
+          && d.start is number && d.end is number && d.end > d.start && d.end - d.start <= 86400000
+          && d.ageMin is int && d.ageMin >= 13 && d.ageMax is int && d.ageMax >= d.ageMin && d.ageMax <= 99
+          && str(d.placeName, 1, 120) && inNYC(d) && d.imageCount is int && d.imageCount <= 2;
+      }
+      allow read: if resource.data.hidden == false
+        || (signedIn() && (resource.data.hostId == request.auth.uid || isAdmin()));
+
+      allow create: if active() && valid(request.resource.data)
+        && request.resource.data.hostId == request.auth.uid
+        && request.resource.data.hostName == me().username
+        && request.resource.data.start > request.time.toMillis()
+        && request.resource.data.hidden == false && request.resource.data.cancelled == false
+        && request.resource.data.reporters.size() == 0
+        && request.resource.data.goingCount == 0 && request.resource.data.interestedCount == 0
+        && (request.resource.data.hostVerified == false || me().get('verifiedOrg', null) != null);
+
+      allow update: if
+        // Host edits content (not trust/moderation fields).
+        (active() && resource.data.hostId == request.auth.uid && valid(request.resource.data)
+          && changed().hasOnly(['title', 'category', 'description', 'whoShouldJoin', 'start', 'end', 'ageMin', 'ageMax',
+            'familyFriendly', 'indoor', 'capacity', 'placeId', 'placeName', 'lat', 'lng', 'borough', 'geohash', 'imageCount', 'cancelled']))
+        // RSVP counters move by at most one per write.
+        || (active() && changed().hasOnly(['goingCount', 'interestedCount'])
+          && request.resource.data.goingCount >= 0 && request.resource.data.interestedCount >= 0
+          && request.resource.data.goingCount - resource.data.goingCount <= 1 && resource.data.goingCount - request.resource.data.goingCount <= 1
+          && request.resource.data.interestedCount - resource.data.interestedCount <= 1 && resource.data.interestedCount - request.resource.data.interestedCount <= 1)
+        // A reporter adds only themself. 3+ reporters → hidden on read (client) + admin review.
+        || (active() && changed().hasOnly(['reporters'])
+          && request.resource.data.reporters.hasAll(resource.data.reporters)
+          && request.resource.data.reporters.size() == resource.data.reporters.size() + 1
+          && request.auth.uid in request.resource.data.reporters)
+        || isAdmin();
+      allow delete: if signedIn() && (resource.data.hostId == request.auth.uid || isAdmin());
+    }
+
+    // Base64 WebP photos kept apart so event docs stay small.
+    match /eventImages/{id} {
+      allow read: if true;
+      allow create, update: if active() && request.resource.data.hostId == request.auth.uid
+        && get(/databases/$(database)/documents/events/$(id)).data.hostId == request.auth.uid
+        && request.resource.data.images is list && request.resource.data.images.size() <= 2;
+      allow delete: if signedIn() && (resource.data.hostId == request.auth.uid || isAdmin());
+    }
+
+    // RSVPs: id = eventId_uid. Minors' RSVPs are never readable by others.
+    match /rsvps/{id} {
+      allow read: if resource.data.minor == false || (signedIn() && (resource.data.uid == request.auth.uid || isAdmin()));
+      allow create: if active() && request.resource.data.uid == request.auth.uid
+        && id == request.resource.data.eventId + '_' + request.auth.uid
+        && request.resource.data.status in ['going', 'interested']
+        && request.resource.data.minor == (request.time.year() - me().birthYear < 18)
+        && request.resource.data.username == me().username;
+      allow update: if signedIn() && resource.data.uid == request.auth.uid
+        && changed().hasOnly(['status', 'promptHandled', 'createdAt']);
+      allow delete: if signedIn() && (resource.data.uid == request.auth.uid || isAdmin());
+    }
+
+    // One live check-in per user; expires 90 min after creation.
+    match /checkins/{uid} {
+      allow read: if true;
+      allow create, update: if active() && request.auth.uid == uid
+        && request.resource.data.uid == uid
+        && request.resource.data.placeId is string
+        && request.resource.data.expiresAt == request.resource.data.createdAt + 5400000
+        && request.resource.data.createdAt > request.time.toMillis() - 300000
+        && request.resource.data.createdAt < request.time.toMillis() + 300000;
+      allow delete: if signedIn() && request.auth.uid == uid;
+    }
+
+    // Reports: users create (one per target), admins read and resolve.
+    match /reports/{id} {
+      allow create: if active() && request.resource.data.reporterId == request.auth.uid
+        && id == request.resource.data.targetId + '_' + request.auth.uid
+        && request.resource.data.status == 'open'
+        && request.resource.data.reason in ['spam', 'inappropriate', 'unsafe', 'private address', 'scam', 'harassment', 'other']
+        && str(request.resource.data.note, 0, 300);
+      allow read, update, delete: if isAdmin();
+    }
+
+    match /orgRequests/{id} {
+      allow create: if active() && request.resource.data.uid == request.auth.uid && request.resource.data.status == 'pending'
+        && str(request.resource.data.orgName, 2, 80) && str(request.resource.data.website, 8, 200);
+      allow read: if signedIn() && (resource.data.uid == request.auth.uid || isAdmin());
+      allow update, delete: if isAdmin();
+    }
+  }
+}

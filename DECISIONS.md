@@ -1,0 +1,36 @@
+# Decisions
+
+- Visual style: Google Maps–like. Arial, neutral surfaces, blue accent `#1A73E8` (dark `#8AB4F8`), pill buttons, icon rail nav, left results panel on Explore.
+- Font: Arial (system, no download).
+- shadcn/ui CLI is interactive; wrote equivalent Tailwind components by hand in `src/components/ui.tsx`.
+- Sport icons (basketball, tennis, soccer, baseball, handball, fields) drawn in `icons.tsx`; lucide has none.
+- Places: courts/fields grouped to one pin per park + sport (5,800 courts → ~1,650 pins).
+- Places: drinking fountains grouped to one pin per park to keep `places.json` small.
+- Places: LPC landmark polygons use state-plane coordinates; used a curated list of public outdoor landmarks plus Historic House Parks.
+- Places: only Queens Public Library has a verified open dataset with coordinates; NYPL/BPL branches skipped.
+- Places: `places.json` is ~1.1 MB raw / ~170 KB gzip, loaded as its own lazy chunk.
+- Place IDs are stable (`pk-Q024`, `f-Q024basketball`) so seeded events survive re-fetches.
+- Demo mode stores data in localStorage (records) + IndexedDB (images); per-browser only.
+- Demo mode simulates check-ins at popular Queens places so activity levels look live.
+- Firebase SDK is dynamically imported only when env vars exist.
+- Username login: `usernames/{name}` stores uid + email, readable by `get` only (not `list`).
+- Check-ins: one doc per user (`checkins/{uid}`); a new check-in replaces the old one. Counts only shown.
+- RSVP counters are client-incremented; rules cap each change at ±1.
+- Auto-hide: events keep a `reporters` array; rules let a user add only themself; ≥3 hides on read.
+- Reports are one per user per target (doc id `targetId_uid`).
+- Minors' RSVPs are unreadable by others in rules, and the UI hides them from attendee lists.
+- Under-18 profiles show no join date or events publicly.
+- 5 events/day limit is enforced client-side (rules can't count without Functions).
+- Event location must be a bundled place, a map tap snapped to the nearest place (<0.2 mi), or a Google Places result of public types inside NYC.
+- Google Places uses the new `AutocompleteSuggestion` API (legacy Autocomplete can't be enabled on new projects).
+- Without a cloud Map ID, the map uses JSON styles + classic markers; with Map IDs, Advanced Markers.
+- Map remounts on theme change (cloud Map IDs can't switch after init).
+- Recommendations on Discover ignore the distance cap so filters can show far events; Home is strict.
+- Place recommendations skip restrooms/fountains; libraries count as indoor for weather.
+- Weather cached 30 min per ~0.05° grid cell (localStorage + memory); failures hide the chip.
+- Images: compressed client-side to ≤150 KB WebP, stored as base64 in `eventImages/{id}` (no Storage on Spark).
+- Delete account removes profile, username, favorites, logs, RSVPs, hosted events, images, check-in.
+- Demo credentials live in `src/data/seed.ts` (test values for judges only).
+- Seed/admin scripts use `firebase-admin` with a free service account key; no Blaze needed.
+- Email verification is sent but not required to use the app (keeps judging friction low); Profile shows a nudge.
+- Maps key lives in a separate Cloud project; billing on the Firebase project would force Blaze.

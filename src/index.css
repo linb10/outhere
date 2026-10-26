@@ -1,0 +1,69 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Google Maps–like palette: neutral surfaces, one blue accent. */
+:root {
+  --bg: 255 255 255;
+  --card: 255 255 255;
+  --elev: 241 243 244;
+  --fg: 32 33 36;
+  --muted: 95 99 104;
+  --line: 218 220 224;
+  --accent: 26 115 232;
+  --accent-fg: 255 255 255;
+  --accent-ink: 26 115 232;
+  --danger: 217 48 37;
+  --warn: 176 96 0;
+  color-scheme: light;
+}
+.dark {
+  --bg: 32 33 36;
+  --card: 41 42 45;
+  --elev: 53 54 58;
+  --fg: 232 234 237;
+  --muted: 154 160 166;
+  --line: 60 64 67;
+  --accent: 138 180 248;
+  --accent-fg: 32 33 36;
+  --accent-ink: 138 180 248;
+  --danger: 242 139 130;
+  --warn: 253 214 99;
+  color-scheme: dark;
+}
+
+@layer base {
+  html { -webkit-tap-highlight-color: transparent; }
+  body { @apply bg-bg text-fg font-sans antialiased; min-height: 100dvh; overflow-x: hidden; }
+  h1, h2, h3 { @apply font-sans font-bold; letter-spacing: -0.01em; }
+  :focus-visible { outline: 2px solid rgb(var(--accent)); outline-offset: 2px; border-radius: 6px; }
+  input, select, textarea { font-size: 16px; }
+}
+
+@layer components {
+  .label { @apply text-[13px] font-bold text-muted; }
+  .card { @apply bg-card border border-line rounded-xl; }
+  .field { @apply w-full h-12 rounded-lg bg-card border border-line px-3.5 text-fg placeholder:text-muted outline-none focus:border-accent focus:ring-1 focus:ring-accent transition-colors; }
+  .no-scrollbar { scrollbar-width: none; }
+  .no-scrollbar::-webkit-scrollbar { display: none; }
+  .skeleton { @apply bg-elev rounded-lg relative overflow-hidden; }
+  .skeleton::after {
+    content: ''; position: absolute; inset: 0;
+    background: linear-gradient(90deg, transparent, rgb(var(--card) / 0.6), transparent);
+    animation: shimmer 1.2s infinite;
+  }
+  .shadow-float { box-shadow: 0 1px 2px rgb(60 64 67 / 0.3), 0 2px 6px 2px rgb(60 64 67 / 0.15); }
+}
+@keyframes shimmer { from { transform: translateX(-100%); } to { transform: translateX(100%); } }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+}
+
+.pb-safe { padding-bottom: env(safe-area-inset-bottom); }
+.pt-safe { padding-top: env(safe-area-inset-top); }
+
+@media print {
+  .no-print { display: none !important; }
+  body { background: white; color: black; }
+}
